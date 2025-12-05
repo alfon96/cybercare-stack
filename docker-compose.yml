@@ -1,0 +1,77 @@
+name: CyberCareTask
+networks:
+  app_net:
+    driver: bridge
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: af-postgres
+    labels:
+      - "cybercare.scope=logs"
+    env_file:
+      - ./.env
+    volumes:
+      - postgres_volume:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks: [app_net]
+    restart: unless-stopped
+  consumer:
+    image: alfo96/af-consumer:latest
+    container_name: af-consumer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "cybercare.scope=logs"
+    env_file:
+      - ./consumer/.env
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS http://localhost:${APP_PORT:-8000}/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [app_net]
+    restart: unless-stopped
+  propagator:
+    image: alfo96/af-propagator:latest
+    container_name: af-propagator
+    depends_on:
+      consumer:
+        condition: service_healthy
+    labels:
+      - "cybercare.scope=logs"
+    env_file:
+      - ./propagator/.env
+    volumes:
+      - ./propagator/payloads.json:/app/payloads.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "poetry",
+          "run",
+          "python",
+          "-m",
+          "src.adapters.driven.config.health_check",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [app_net]
+    restart: unless-stopped
+volumes:
+  postgres_volume:
